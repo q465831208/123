@@ -9,20 +9,21 @@ const exec = promisify(require('child_process').exec);
 const { execSync } = require('child_process');        // 只填写UPLOAD_URL将上传节点,同时填写UPLOAD_URL和PROJECT_URL将上传订阅
 const UPLOAD_URL = process.env.UPLOAD_URL || '';      // 节点或订阅自动上传地址,需填写部署Merge-sub项目后的首页地址,例如：https://merge.xxx.com
 const PROJECT_URL = process.env.PROJECT_URL || '';    // 需要上传订阅或保活时需填写项目分配的url,例如：https://google.com
-const AUTO_ACCESS = process.env.AUTO_ACCESS || false; // false关闭自动保活，true开启,需同时填写PROJECT_URL变量
+const AUTO_ACCESS = process.env.AUTO_ACCESS === 'true' || false; // false关闭自动保活，true开启,需同时填写PROJECT_URL变量
 const FILE_PATH = process.env.FILE_PATH || './tmp';   // 运行目录,sub节点文件保存目录
 const SUB_PATH = process.env.SUB_PATH || '123';       // 订阅路径
 const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;        // http服务订阅端口
-const UUID = process.env.UUID || '740fd075-0210-4c56-be8b-4e49f9cd8872'; // 使用哪吒v1,在不同的平台运行需修改UUID,否则会覆盖
+const UUID = process.env.UUID || '296190be-a299-474b-b691-627a65b118a8'; // 使用哪吒v1,在不同的平台运行需修改UUID,否则会覆盖
 const NEZHA_SERVER = process.env.NEZHA_SERVER || 'nezha.ylm52.dpdns.org:443';        // 哪吒v1填写形式: nz.abc.com:8008  哪吒v0填写形式：nz.abc.com
 const NEZHA_PORT = process.env.NEZHA_PORT || '';            // 使用哪吒v1请留空，哪吒v0需填写
 const NEZHA_KEY = process.env.NEZHA_KEY || 'ricZCX8ODNyN0X4UlSRSnZ9l92zn4UDB';              // 哪吒v1的NZ_CLIENT_SECRET或哪吒v0的agent密钥
-const ARGO_DOMAIN = process.env.ARGO_DOMAIN || 'vps-xjp.daili123.dpdns.org';          // 固定隧道域名,留空即启用临时隧道
-const ARGO_AUTH = process.env.ARGO_AUTH || 'eyJhIjoiYWViZTE2OGY2YmM2NmFhZThmMDcwNjY2ZWVkYmJiZDIiLCJ0IjoiOWU5YmM3ODMtYTZiYS00Y2E5LTlmODMtZWY4YmIwN2IzNTA3IiwicyI6Ik5tRm1NbU5rTkdFdFptSmpNUzAwT0dSaUxUazNOekF0T0dVNE1qZ3hOemhoTkRJNSJ9';              // 固定隧道密钥json或token,留空即启用临时隧道,json获取地址：https://json.zone.id
+const ARGO_DOMAIN = process.env.ARGO_DOMAIN || 'claw-jp.daili123.dpdns.org';          // 固定隧道域名,留空即启用临时隧道
+const ARGO_AUTH = process.env.ARGO_AUTH || 'eyJhIjoiYWViZTE2OGY2YmM2NmFhZThmMDcwNjY2ZWVkYmJiZDIiLCJ0IjoiZTY1MWVlMzktMDM2My00M2E3LTg1NjktOTgwYjI3MGI0ZDgwIiwicyI6Ill6YzFOMlkzTm1FdE9XRXdZeTAwWm1RMkxUbGlaR0V0TURsbU1EaGhZemcyTWpJeSJ9';              // 固定隧道密钥json或token,留空即启用临时隧道,json获取地址：https://json.zone.id
 const ARGO_PORT = process.env.ARGO_PORT || 8001;            // 固定隧道端口,使用token需在cloudflare后台设置和这里一致
 const CFIP = process.env.CFIP || 'cf.877774.xyz';        // 节点优选域名或优选ip  
 const CFPORT = process.env.CFPORT || 443;                   // 节点优选域名或优选ip对应的端口
-const NAME = process.env.NAME || 'Oracle';                        // 节点名称
+const NAME = process.env.NAME || 'claw';                        // 节点名称
+const XIEYI = process.env.XIEYI || '';                         // 协议选择：值为3生成三种协议(VMESS/VLESS/TROJAN)，其他值默认只生成VMESS
 const CHAT_ID = process.env.CHAT_ID || '2117746804';                   // Telegram chat_id  两个变量不全不推送节点到TG 
 const BOT_TOKEN = process.env.BOT_TOKEN || '5279043230:AAFI4qfyo0oP7HJ-39jLqjqq9Wh6OeWrTjw';               // Telegram bot_token 两个变量不全不推送节点到TG 
 
@@ -59,7 +60,7 @@ let bootLogPath = path.join(FILE_PATH, 'boot.log');
 let configPath = path.join(FILE_PATH, 'config.json');
 
 // 如果订阅器上存在历史运行节点则先删除
-function deleteNodes() {
+async function deleteNodes() {
   try {
     if (!UPLOAD_URL) return;
     if (!fs.existsSync(subPath)) return;
@@ -68,25 +69,27 @@ function deleteNodes() {
     try {
       fileContent = fs.readFileSync(subPath, 'utf-8');
     } catch {
-      return null;
+      return;
     }
 
     const decoded = Buffer.from(fileContent, 'base64').toString('utf-8');
     const nodes = decoded.split('\n').filter(line => 
-      /(vless|vmess|trojan|hysteria2|tuic):\/\//.test(line)
+      /(vless|vmess|trojan|hysteria2|tuic):\/\//.test(line.trim())
     );
 
     if (nodes.length === 0) return;
 
-    axios.post(`${UPLOAD_URL}/api/delete-nodes`, 
-      JSON.stringify({ nodes }),
-      { headers: { 'Content-Type': 'application/json' } }
-    ).catch((error) => { 
-      return null; 
-    });
-    return null;
+    try {
+      await axios.post(`${UPLOAD_URL}/api/delete-nodes`, 
+        { nodes },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      console.log(`Deleted ${nodes.length} nodes from server`);
+    } catch (error) {
+      console.warn('Failed to delete nodes:', error.message);
+    }
   } catch (err) {
-    return null;
+    console.error('Error in deleteNodes:', err.message);
   }
 }
 
@@ -415,19 +418,12 @@ async function extractDomains() {
         console.log('ArgoDomain not found, re-running bot to obtain ArgoDomain');
         // 删除 boot.log 文件，等待 2s 重新运行 server 以获取 ArgoDomain
         fs.unlinkSync(path.join(FILE_PATH, 'boot.log'));
-        async function killBotProcess() {
-          try {
-            // Windows系统使用taskkill命令
-            if (process.platform === 'win32') {
-              await exec(`taskkill /f /im ${botName}.exe > nul 2>&1`);
-            } else {
-              await exec(`pkill -f "[${botName.charAt(0)}]${botName.substring(1)}" > /dev/null 2>&1`);
-            }
-          } catch (error) {
-            // 忽略输出
-          }
+        // 停止 bot 进程
+        try {
+          await exec(`pkill -f "${botName}" > /dev/null 2>&1`);
+        } catch (error) {
+          // 忽略输出
         }
-        killBotProcess();
         await new Promise((resolve) => setTimeout(resolve, 3000));
         const args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
         try {
@@ -454,21 +450,32 @@ async function extractDomains() {
     // 如果 NAME 为空，则只使用 ISP 作为名称
     const nodeName = NAME ? `${NAME}-${ISP}` : ISP;
 
-    return new Promise((resolve) => {
-      setTimeout(() => {
+    return new Promise(async (resolve) => {
+      setTimeout(async () => {
         const VMESS = { v: '2', ps: `${nodeName}`, add: CFIP, port: CFPORT, id: UUID, aid: '0', scy: 'none', net: 'ws', type: 'none', host: argoDomain, path: '/vmess-argo?ed=2560', tls: 'tls', sni: argoDomain, alpn: '', fp: 'firefox'};
-        const subTxt = `
+        
+        // 根据XIEYI环境变量决定生成哪些协议
+        let subTxt = '';
+        if (XIEYI === '3') {
+          // 生成三种协议：VLESS、VMESS、TROJAN
+          subTxt = `
 vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Fvless-argo%3Fed%3D2560#${nodeName}
   
 vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}
   
 trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#${nodeName}
     `;
+        } else {
+          // 默认只生成VMESS协议
+          subTxt = `vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}`;
+        }
         // 打印 sub.txt 内容到控制台
         console.log(Buffer.from(subTxt).toString('base64'));
         fs.writeFileSync(subPath, Buffer.from(subTxt).toString('base64'));
         console.log(`${FILE_PATH}/sub.txt saved successfully`);
-        uploadNodes();
+        await uploadNodes();
+        // 推送节点到Telegram
+        await sendToTelegram(subTxt.trim(), nodeName);
         // 将内容进行 base64 编码并写入 SUB_PATH 路由
         app.get(`/${SUB_PATH}`, (req, res) => {
           const encodedContent = Buffer.from(subTxt).toString('base64');
@@ -478,6 +485,45 @@ trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&typ
         resolve(subTxt);
       }, 2000);
     });
+  }
+}
+
+// 推送节点到Telegram
+async function sendToTelegram(subTxt, nodeName) {
+  // 检查是否配置了 Telegram 参数
+  if (!CHAT_ID || !BOT_TOKEN) {
+    console.log('Telegram推送未配置：CHAT_ID 或 BOT_TOKEN 为空');
+    return;
+  }
+
+  try {
+    const telegramApiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+    const message = `🔗 新节点已生成\n\n节点名称：${nodeName}\n\n订阅链接：\n\`\`\`\n${subTxt.trim()}\n\`\`\``;
+
+    const response = await axios.post(telegramApiUrl, {
+      chat_id: CHAT_ID,
+      text: message,
+      parse_mode: 'Markdown'
+    }, {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (response && response.status === 200) {
+      console.log('节点已推送到Telegram');
+      return response;
+    } else {
+      console.warn('Telegram推送失败：未知响应状态');
+      return null;
+    }
+  } catch (error) {
+    if (error.response) {
+      console.error('Telegram推送失败:', error.response.data);
+    } else {
+      console.error('Telegram推送失败:', error.message);
+    }
+    return null;
   }
 }
 
@@ -548,20 +594,12 @@ function cleanFiles() {
       filesToDelete.push(phpPath);
     }
 
-    // Windows系统使用不同的删除命令
-    if (process.platform === 'win32') {
-      exec(`del /f /q ${filesToDelete.join(' ')} > nul 2>&1`, (error) => {
-        console.clear();
-        console.log('App is running');
-        console.log('Thank you for using this script, enjoy!');
-      });
-    } else {
-      exec(`rm -rf ${filesToDelete.join(' ')} >/dev/null 2>&1`, (error) => {
-        console.clear();
-        console.log('App is running');
-        console.log('Thank you for using this script, enjoy!');
-      });
-    }
+    // Linux容器环境删除文件
+    exec(`rm -f ${filesToDelete.join(' ')} >/dev/null 2>&1`, (error) => {
+      console.clear();
+      console.log('App is running');
+      console.log('Thank you for using this script, enjoy!');
+    });
   }, 90000); // 90s
 }
 cleanFiles();
@@ -593,7 +631,7 @@ async function AddVisitTask() {
 // 主运行逻辑
 async function startserver() {
   try {
-    deleteNodes();
+    await deleteNodes(); // 确保删除节点操作完成
     cleanupOldFiles();
     await generateConfig();
     await downloadFilesAndRun();
