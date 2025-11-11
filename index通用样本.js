@@ -13,17 +13,17 @@ const AUTO_ACCESS = process.env.AUTO_ACCESS === 'true' || false; // false关闭�
 const FILE_PATH = process.env.FILE_PATH || './tmp';   // 运行目录,sub节点文件保存目录
 const SUB_PATH = process.env.SUB_PATH || '123';       // 订阅路径
 const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;        // http服务订阅端口
-const UUID = process.env.UUID || '00da4e8e-96cc-4ae9-9a20-268daa1a4bf8'; // 使用哪吒v1,在不同的平台运行需修改UUID,否则会覆盖
+const UUID = process.env.UUID || '296190be-a299-474b-b691-627a65b118a8'; // 使用哪吒v1,在不同的平台运行需修改UUID,否则会覆盖
 const NEZHA_SERVER = process.env.NEZHA_SERVER || 'nezha.ylm52.dpdns.org:443';        // 哪吒v1填写形式: nz.abc.com:8008  哪吒v0填写形式：nz.abc.com
 const NEZHA_PORT = process.env.NEZHA_PORT || '';            // 使用哪吒v1请留空，哪吒v0需填写
 const NEZHA_KEY = process.env.NEZHA_KEY || 'ricZCX8ODNyN0X4UlSRSnZ9l92zn4UDB';              // 哪吒v1的NZ_CLIENT_SECRET或哪吒v0的agent密钥
-const ARGO_DOMAIN = process.env.ARGO_DOMAIN || 'north.vvls.netlib.re';          // 固定隧道域名,留空即启用临时隧道
+const ARGO_DOMAIN = process.env.ARGO_DOMAIN || 'north.5.5.9.f.0.7.4.0.1.0.0.2.ip6.arpa';          // 固定隧道域名,留空即启用临时隧道
 const ARGO_AUTH = process.env.ARGO_AUTH || 'eyJhIjoiYTIyMGI2MDFlMmJlYWE0ODQzNWRkZjAyMjllYjg1YmUiLCJ0IjoiNDVlMzFmNDctYzUxNS00NTQwLTg1ODEtYWFhYzE0NzE4NDEyIiwicyI6IllXWTFNRGd4TWpVdFpXRTNNeTAwTXpNeExUZzRPVFl0WldRNFlURTFaVFpsWWpOaSJ9';              // 固定隧道密钥json或token,留空即启用临时隧道,json获取地址：https://json.zone.id
 const ARGO_PORT = process.env.ARGO_PORT || 8001;            // 固定隧道端口,使用token需在cloudflare后台设置和这里一致
 const CFIP = process.env.CFIP || 'cf.877774.xyz';        // 节点优选域名或优选ip  
 const CFPORT = process.env.CFPORT || 443;                   // 节点优选域名或优选ip对应的端口
 const NAME = process.env.NAME || 'northflank';                        // 节点名称
-const XIEYI = process.env.XIEYI || '';                         // 协议选择：值为3生成三种协议(VMESS/VLESS/TROJAN)，其他值默认只生成VMESS
+const XIEYI = process.env.XIEYI || '2';                         // 协议选择：值为3生成三种协议(VMESS/VLESS/TROJAN)，值为2生成VMESS和VLESS，其他值默认只生成VMESS
 const CHAT_ID = process.env.CHAT_ID || '2117746804';                   // Telegram chat_id  两个变量不全不推送节点到TG 
 const BOT_TOKEN = process.env.BOT_TOKEN || '5279043230:AAFI4qfyo0oP7HJ-39jLqjqq9Wh6OeWrTjw';               // Telegram bot_token 两个变量不全不推送节点到TG 
 
@@ -115,7 +115,7 @@ function cleanupOldFiles() {
 
 // 根路由
 app.get("/", function(req, res) {
-  res.send("Hello world!");
+  res.send("success ylm!");
 });
 
 // 生成xr-ay配置文件
@@ -440,48 +440,88 @@ async function extractDomains() {
     }
   }
 
-  // 生成 list 和 sub 信息
-  async function generateLinks(argoDomain) {
+async function generateLinks(argoDomain) {
+    // 城市名称到国家/地区二位代码的映射表 (ISO 3166-1 alpha-2)
+    function getAbbreviation(location) {
+        const map = {
+            'Singapore': 'SG', 'Hong_Kong': 'HK', 'Taipei': 'TW', 'Tokyo': 'JP', 'Osaka': 'JP', 'Seoul': 'KR', 
+            'Jakarta': 'ID', 'Kuala_Lumpur': 'MY', 'Manila': 'PH', 'Mumbai': 'IN', 'Delhi': 'IN', 'Bangkok': 'TH',
+            'Hanoi': 'VN', 'Ho_Chi_Minh_City': 'VN', 'Ashburn': 'US', 'Chicago': 'US', 'Dallas': 'US', 
+            'Los_Angeles': 'US', 'San_Jose': 'US', 'Seattle': 'US', 'Miami': 'US', 'Toronto': 'CA', 
+            'Montreal': 'CA', 'Frankfurt': 'DE', 'London': 'GB', 'Paris': 'FR', 'Amsterdam': 'NL', 
+            'Warsaw': 'PL', 'Madrid': 'ES', 'Milan': 'IT', 'Stockholm': 'SE', 'Zurich': 'CH', 
+            'Sydney': 'AU', 'Melbourne': 'AU', 'Auckland': 'NZ', 'Sao_Paulo': 'BR', 'Santiago': 'CL', 
+            'Bogota': 'CO', 'Dubai': 'AE', 'Johannesburg': 'ZA',
+        };
+        
+        const cleanedLocation = location.replace(/[\s_]/g, '');
+
+        for (const full in map) {
+            if (cleanedLocation.toLowerCase() === full.replace(/_/g, '').toLowerCase()) {
+                return map[full];
+            }
+        }
+        
+        return cleanedLocation.substring(0, 3).toUpperCase();
+    }
+    
+    // 提取城市名
     const metaInfo = execSync(
-      'curl -sm 5 https://speed.cloudflare.com/meta | awk -F\\" \'{print $26"-"$18}\' | sed -e \'s/ /_/g\'',
+      'curl -sm 5 https://speed.cloudflare.com/meta | awk -F\\" \'{print $26}\' | sed -e \'s/ /_/g\'',
       { encoding: 'utf-8' }
     );
     const ISP = metaInfo.trim();
-    // 如果 NAME 为空，则只使用 ISP 作为名称
-    const nodeName = NAME ? `${NAME}-${ISP}` : ISP;
+    const locationAbbreviation = getAbbreviation(ISP);
+    const nodeName = NAME ? `${NAME}-${locationAbbreviation}` : locationAbbreviation;
 
     return new Promise(async (resolve) => {
       setTimeout(async () => {
         const VMESS = { v: '2', ps: `${nodeName}`, add: CFIP, port: CFPORT, id: UUID, aid: '0', scy: 'none', net: 'ws', type: 'none', host: argoDomain, path: '/vmess-argo?ed=2560', tls: 'tls', sni: argoDomain, alpn: '', fp: 'firefox'};
         
-        // 根据XIEYI环境变量决定生成哪些协议
         let subTxt = '';
+        
+        // --- 协议选择逻辑修改开始 ---
         if (XIEYI === '3') {
-          // 生成三种协议：VLESS、VMESS、TROJAN
+          // 生成 VMESS, VLESS, TROJAN (三种)
           subTxt = `
-vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Fvless-argo%3Fed%3D2560#${nodeName}
+vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Fvless-argo%3Fed%3D2560#${nodeName}-VLESS
   
 vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}
   
-trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#${nodeName}
+trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#${nodeName}-TROJAN
+    `;
+        } else if (XIEYI === '2') {
+          // 生成 VMESS, VLESS (两种)
+          subTxt = `
+vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Fvless-argo%3Fed%3D2560#${nodeName}-VLESS
+  
+vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}
     `;
         } else {
-          // 默认只生成VMESS协议
+          // 默认只生成 VMESS (一种)
           subTxt = `vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}`;
         }
-        // 打印 sub.txt 内容到控制台
+        // --- 协议选择逻辑修改结束 ---
+
+        // 统一在节点名后添加协议类型，方便区分，VMESS默认不加后缀
+        // VLESS 和 TROJAN 已经在上面的字符串中添加了后缀。
+        
         console.log(Buffer.from(subTxt).toString('base64'));
         fs.writeFileSync(subPath, Buffer.from(subTxt).toString('base64'));
         console.log(`${FILE_PATH}/sub.txt saved successfully`);
+        
         await uploadNodes();
-        // 推送节点到Telegram
         await sendToTelegram(subTxt.trim(), nodeName);
-        // 将内容进行 base64 编码并写入 SUB_PATH 路由
-        app.get(`/${SUB_PATH}`, (req, res) => {
-          const encodedContent = Buffer.from(subTxt).toString('base64');
-          res.set('Content-Type', 'text/plain; charset=utf-8');
-          res.send(encodedContent);
-        });
+        
+        // 确保路由只被设置一次
+        if (!app._router.stack.some(layer => layer.route && layer.route.path === `/${SUB_PATH}`)) {
+           app.get(`/${SUB_PATH}`, (req, res) => {
+             const encodedContent = Buffer.from(subTxt).toString('base64');
+             res.set('Content-Type', 'text/plain; charset=utf-8');
+             res.send(encodedContent);
+           });
+        }
+        
         resolve(subTxt);
       }, 2000);
     });
