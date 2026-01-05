@@ -17,7 +17,7 @@ const PROJECT_URL = process.env.PROJECT_URL || '';      // 需要上传订阅或
 const AUTO_ACCESS = process.env.AUTO_ACCESS === 'true' || false; // false关闭自动保活，true开启
 const FILE_PATH = process.env.FILE_PATH || './tmp';     // 运行目录
 const SUB_PATH = process.env.SUB_PATH || '123';         // 订阅路径
-const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;         // http服务订阅端口
+const PORT = process.env.SERVER_PORT || process.env.PORT || 52125;         // http服务订阅端口
 const UUID = process.env.UUID || 'a6408463-faf3-4fbf-8cca-e0b48b17a1a7'; // UUID
 const NEZHA_SERVER = process.env.NEZHA_SERVER || 'nezha.ylm52.dpdns.org:443'; // 哪吒服务器地址
 const NEZHA_PORT = process.env.NEZHA_PORT || '';             // 使用哪吒v1请留空，哪吒v0需填写
@@ -29,11 +29,9 @@ const CFIP = process.env.CFIP || 'saas.sin.fan';         // 节点优选域名�
 const CFPORT = process.env.CFPORT || 443;                     // 节点优选域名或优选ip对应的端口
 const NAME = process.env.NAME || 'cs';                           // 节点名称
 const XIEYI = process.env.XIEYI || '2';                          // 协议选择
+const SOCKS5_PORT = process.env.SOCKS5_PORT || '52123';               // SOCKS5 节点端口（留空则不生成）
 const CHAT_ID = process.env.CHAT_ID || '2117746804';                      // Telegram chat_id
 const BOT_TOKEN = process.env.BOT_TOKEN || '5279043230:AAFI4qfyo0oP7HJ-39jLqjqq9Wh6OeWrTjw';                   // Telegram bot_token
-const S5_PORT = process.env.S5_PORT || '52123';                                 // SOCKS5节点端口（留空则不启用）
-const S5_USER = process.env.S5_USER || '';                                 // SOCKS5用户名（可选，留空则无认证）
-const S5_PASS = process.env.S5_PASS || '';                                 // SOCKS5密码（可选，留空则无认证）
 
 // 【开关】控制是否清理文件。默认 'false' (保留文件以提高稳定性)
 const CLEAN_FILES = process.env.CLEAN_FILES || 'false'; 
@@ -59,13 +57,46 @@ function generateRandomName() {
   return result;
 }
 
-function generateRandomString(length) {
-  const characters = '0123456789abcdef';
+// 生成随机十六进制字符串（用于 SOCKS5 用户名和密码）
+function generateRandomHex(length) {
+  const chars = '0123456789abcdef';
   let result = '';
   for (let i = 0; i < length; i++) {
-    result += characters.charAt(Math.floor(Math.random() * characters.length));
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
+}
+
+// 获取 VPS 真实 IP 地址
+async function getVPSIP() {
+  try {
+    const response = await axios.get('http://ipv4.ip.sb', { timeout: 5000 });
+    if (response.data && response.data.trim()) {
+      return response.data.trim();
+    }
+  } catch (err) {
+    console.error(`获取 VPS IP 失败 (ipv4.ip.sb): ${err.message}`);
+  }
+  
+  try {
+    const response = await axios.get('http://ip-api.com/json/', { timeout: 5000 });
+    if (response.data && response.data.query) {
+      return response.data.query;
+    }
+  } catch (err) {
+    console.error(`获取 VPS IP 失败 (ip-api): ${err.message}`);
+  }
+  
+  try {
+    const response = await axios.get('https://api.ipify.org', { timeout: 5000 });
+    if (response.data && response.data.trim()) {
+      return response.data.trim();
+    }
+  } catch (err) {
+    console.error(`获取 VPS IP 失败 (ipify): ${err.message}`);
+  }
+  
+  return null;
 }
 
 const npmName = generateRandomName();
@@ -80,10 +111,6 @@ let subPath = path.join(FILE_PATH, 'sub.txt');
 let listPath = path.join(FILE_PATH, 'list.txt');
 let bootLogPath = path.join(FILE_PATH, 'boot.log');
 let configPath = path.join(FILE_PATH, 'config.json');
-
-// SOCKS5 用户名和密码（如果未配置则自动生成）
-let socks5User = S5_USER && S5_USER.trim() !== '' ? S5_USER.trim() : '';
-let socks5Pass = S5_PASS && S5_PASS.trim() !== '' ? S5_PASS.trim() : '';
 
 function cleanupOldFiles() {
     try {
@@ -109,7 +136,7 @@ async function deleteNodes() {
     let fileContent;
     try { fileContent = fs.readFileSync(subPath, 'utf-8'); } catch { return; }
     const decoded = Buffer.from(fileContent, 'base64').toString('utf-8');
-    const nodes = decoded.split('\n').filter(line => /(vless|vmess|trojan|hysteria2|tuic|socks5):\/\//.test(line.trim()));
+    const nodes = decoded.split('\n').filter(line => /(vless|vmess|trojan|hysteria2|tuic):\/\//.test(line.trim()));
     if (nodes.length === 0) return;
     try {
       await axios.post(`${UPLOAD_URL}/api/delete-nodes`, { nodes }, { headers: { 'Content-Type': 'application/json' } });
@@ -179,54 +206,15 @@ app.get(`/${SUB_PATH}`, (req, res) => {
 });
 
 async function generateConfig() {
-  const inbounds = [
-    { port: ARGO_PORT, protocol: 'vless', settings: { clients: [{ id: UUID, flow: 'xtls-rprx-vision' }], decryption: 'none', fallbacks: [{ dest: 3001 }, { path: "/vless-argo", dest: 3002 }, { path: "/vmess-argo", dest: 3003 }, { path: "/trojan-argo", dest: 3004 }] }, streamSettings: { network: 'tcp' } },
-    { port: 3001, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID }], decryption: "none" }, streamSettings: { network: "tcp", security: "none" } },
-    { port: 3002, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID, level: 0 }], decryption: "none" }, streamSettings: { network: "ws", security: "none", wsSettings: { path: "/vless-argo" } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"], metadataOnly: false } },
-    { port: 3003, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID, alterId: 0 }] }, streamSettings: { network: "ws", wsSettings: { path: "/vmess-argo" } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"], metadataOnly: false } },
-    { port: 3004, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: "/trojan-argo" } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"], metadataOnly: false } },
-  ];
-  
-  // 如果配置了 SOCKS5 端口，添加 SOCKS5 inbound
-  if (S5_PORT && S5_PORT.trim() !== '') {
-    const socks5Port = parseInt(S5_PORT.trim());
-    if (!isNaN(socks5Port) && socks5Port > 0) {
-      // 如果没有配置用户名和密码，自动生成随机值
-      if (!socks5User || socks5User === '') {
-        socks5User = generateRandomString(8);  // 8位十六进制用户名
-        socks5Pass = generateRandomString(12); // 12位十六进制密码
-        console.log(`SOCKS5 credentials auto-generated - User: ${socks5User}, Pass: ${socks5Pass}`);
-      }
-      
-      const socks5Settings = {
-        auth: "password",
-        accounts: [
-          {
-            user: socks5User,
-            pass: socks5Pass
-          }
-        ],
-        udp: true
-      };
-      
-      console.log(`SOCKS5 inbound configured on port ${socks5Port} with authentication (user: ${socks5User})`);
-      
-      inbounds.push({
-        port: socks5Port,
-        protocol: "socks",
-        settings: socks5Settings,
-        sniffing: {
-          enabled: true,
-          destOverride: ["http", "tls", "quic"],
-          metadataOnly: false
-        }
-      });
-    }
-  }
-  
   const config = {
     log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' },
-    inbounds: inbounds,
+    inbounds: [
+      { port: ARGO_PORT, protocol: 'vless', settings: { clients: [{ id: UUID, flow: 'xtls-rprx-vision' }], decryption: 'none', fallbacks: [{ dest: 3001 }, { path: "/vless-argo", dest: 3002 }, { path: "/vmess-argo", dest: 3003 }, { path: "/trojan-argo", dest: 3004 }] }, streamSettings: { network: 'tcp' } },
+      { port: 3001, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID }], decryption: "none" }, streamSettings: { network: "tcp", security: "none" } },
+      { port: 3002, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID, level: 0 }], decryption: "none" }, streamSettings: { network: "ws", security: "none", wsSettings: { path: "/vless-argo" } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"], metadataOnly: false } },
+      { port: 3003, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID, alterId: 0 }] }, streamSettings: { network: "ws", wsSettings: { path: "/vmess-argo" } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"], metadataOnly: false } },
+      { port: 3004, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: "/trojan-argo" } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"], metadataOnly: false } },
+    ],
     dns: { servers: ["https+local://8.8.8.8/dns-query"] },
     outbounds: [ { protocol: "freedom", tag: "direct" }, {protocol: "blackhole", tag: "block"} ]
   };
@@ -376,21 +364,13 @@ function getCountryName(code) {
 }
 
 async function generateLinks(argoDomain) {
-    let countryCode = 'UN';
-    let realVpsIp = '';  // 真实 VPS IP（仅用于 SOCKS5 节点）
-    
+    let countryCode = 'UN'; 
     try {
         console.log('正在获取 IP 归属地信息 (via ip-api)...');
         const response = await axios.get('http://ip-api.com/json/', { timeout: 6000 });
-        if (response.data) {
-            if (response.data.countryCode) {
-                countryCode = response.data.countryCode;
-                console.log(`获取成功: ${countryCode}`);
-            }
-            if (response.data.query) {
-                realVpsIp = response.data.query;
-                console.log(`获取真实 VPS IP: ${realVpsIp}`);
-            }
+        if (response.data && response.data.countryCode) {
+            countryCode = response.data.countryCode;
+            console.log(`获取成功: ${countryCode}`);
         } else {
             console.log('IP-API 返回异常');
         }
@@ -399,24 +379,8 @@ async function generateLinks(argoDomain) {
         try {
              const httpsAgent = new (require('https').Agent)({ rejectUnauthorized: false });
              const response = await axios.get('https://speed.cloudflare.com/meta', { timeout: 5000, httpsAgent: httpsAgent });
-             if (response.data) {
-                 if (response.data.country) countryCode = response.data.country;
-                 if (response.data.clientIp) realVpsIp = response.data.clientIp;
-             }
+             if (response.data && response.data.country) countryCode = response.data.country;
         } catch(e) {}
-    }
-    
-    // 如果通过 API 获取失败，尝试其他方式获取 IP（仅用于 SOCKS5）
-    if (!realVpsIp) {
-        try {
-            const response = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
-            if (response.data && response.data.ip) {
-                realVpsIp = response.data.ip;
-                console.log(`通过 ipify 获取真实 VPS IP: ${realVpsIp}`);
-            }
-        } catch(e) {
-            console.warn('无法获取真实 VPS IP，SOCKS5 将使用配置的 IP');
-        }
     }
 
     const flagEmoji = getFlagEmoji(countryCode);
@@ -436,22 +400,25 @@ async function generateLinks(argoDomain) {
           subTxt = `vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}`;
         }
 
-        // 如果配置了 SOCKS5 端口，添加 SOCKS5 节点
-        if (S5_PORT && S5_PORT.trim() !== '') {
-          const socks5Port = parseInt(S5_PORT.trim());
-          if (!isNaN(socks5Port) && socks5Port > 0) {
-            // 如果没有生成用户名和密码，现在生成（用于链接生成）
-            if (!socks5User || socks5User === '') {
-              socks5User = generateRandomString(8);  // 8位十六进制用户名
-              socks5Pass = generateRandomString(12); // 12位十六进制密码
+        // 生成 SOCKS5 节点（只有当端口有值时才生成）
+        let socks5Node = '';
+        if (SOCKS5_PORT && SOCKS5_PORT.trim() !== '') {
+          try {
+            const vpsIP = await getVPSIP();
+            if (vpsIP) {
+              const socksUsername = generateRandomHex(8);
+              const socksPassword = generateRandomHex(16);
+              const socksPort = parseInt(SOCKS5_PORT) || 52123;
+              socks5Node = `socks://${socksUsername}:${socksPassword}@${vpsIP}:${socksPort}`;
+              console.log(`SOCKS5 节点已生成: ${socks5Node}`);
+            } else {
+              console.warn('无法获取 VPS IP，跳过 SOCKS5 节点生成');
             }
-            // 确定 SOCKS5 使用的 IP：优先使用真实 VPS IP，如果获取失败则使用 CFIP
-            const socks5Ip = realVpsIp || CFIP;
-            // 生成 socks:// 格式的链接（用于落地反代，使用真实 VPS IP）
-            const socks5Link = `socks://${socks5User}:${socks5Pass}@${socks5Ip}:${socks5Port}`;
-            subTxt += `\n${socks5Link}`;
-            console.log(`SOCKS5 node added: ${socks5Link}`);
+          } catch (err) {
+            console.error(`生成 SOCKS5 节点失败: ${err.message}`);
           }
+        } else {
+          console.log('SOCKS5_PORT 未配置，跳过 SOCKS5 节点生成');
         }
 
         console.log(Buffer.from(subTxt).toString('base64'));
@@ -459,32 +426,20 @@ async function generateLinks(argoDomain) {
         console.log(`${FILE_PATH}/sub.txt saved successfully`);
          
         await uploadNodes();
-        await sendToTelegram(subTxt.trim(), nodeName);
+        await sendToTelegram(subTxt.trim(), nodeName, socks5Node);
         resolve(subTxt);
       }, 2000);
     });
 }
 
-async function sendToTelegram(subTxt, nodeName) {
+async function sendToTelegram(subTxt, nodeName, socks5Node = '') {
   if (!CHAT_ID || !BOT_TOKEN) return;
   try {
     const telegramApiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+    let message = `🔗 新节点已生成\n\n节点名称：${nodeName}\n\n订阅链接：\n\`\`\`\n${subTxt.trim()}\n\`\`\``;
     
-    // 分离 SOCKS5 节点和其他节点
-    const lines = subTxt.trim().split('\n');
-    const socks5Nodes = lines.filter(line => line.startsWith('socks://'));
-    const otherNodes = lines.filter(line => !line.startsWith('socks://'));
-    
-    let message = `🔗 新节点已生成\n\n节点名称：${nodeName}\n\n`;
-    
-    // 如果有其他节点，显示订阅链接
-    if (otherNodes.length > 0) {
-      message += `订阅链接：\n\`\`\`\n${otherNodes.join('\n')}\n\`\`\`\n\n`;
-    }
-    
-    // 如果有 SOCKS5 节点，单独列出
-    if (socks5Nodes.length > 0) {
-      message += `🌐 SOCKS5 落地节点：\n\`\`\`\n${socks5Nodes.join('\n')}\n\`\`\``;
+    if (socks5Node) {
+      message += `\n\n🌐 SOCKS5 落地节点：\n\n\`${socks5Node}\``;
     }
     
     await axios.post(telegramApiUrl, { chat_id: CHAT_ID, text: message, parse_mode: 'Markdown' }, { headers: { 'Content-Type': 'application/json' } });
@@ -504,7 +459,7 @@ async function uploadNodes() {
     }
   } else if (UPLOAD_URL && fs.existsSync(listPath)) {
       const content = fs.readFileSync(listPath, 'utf-8');
-      const nodes = content.split('\n').filter(line => /(vless|vmess|trojan|hysteria2|tuic|socks5):\/\//.test(line));
+      const nodes = content.split('\n').filter(line => /(vless|vmess|trojan|hysteria2|tuic):\/\//.test(line));
       if (nodes.length > 0) {
           try { await axios.post(`${UPLOAD_URL}/api/add-nodes`, JSON.stringify({ nodes }), { headers: { 'Content-Type': 'application/json' } }); console.log('Nodes uploaded'); } catch (error) {}
       }
