@@ -17,7 +17,7 @@ const PROJECT_URL = process.env.PROJECT_URL || '';      // 需要上传订阅或
 const AUTO_ACCESS = process.env.AUTO_ACCESS === 'true' || false; // false关闭自动保活，true开启
 const FILE_PATH = process.env.FILE_PATH || './tmp';     // 运行目录
 const SUB_PATH = process.env.SUB_PATH || '123';         // 订阅路径
-const PORT = process.env.SERVER_PORT || process.env.PORT || 52125;         // http服务订阅端口
+const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;         // http服务订阅端口
 const UUID = process.env.UUID || 'a6408463-faf3-4fbf-8cca-e0b48b17a1a7'; // UUID
 const NEZHA_SERVER = process.env.NEZHA_SERVER || 'nezha.ylm52.dpdns.org:443'; // 哪吒服务器地址
 const NEZHA_PORT = process.env.NEZHA_PORT || '';             // 使用哪吒v1请留空，哪吒v0需填写
@@ -29,7 +29,6 @@ const CFIP = process.env.CFIP || 'saas.sin.fan';         // 节点优选域名�
 const CFPORT = process.env.CFPORT || 443;                     // 节点优选域名或优选ip对应的端口
 const NAME = process.env.NAME || 'cs';                           // 节点名称
 const XIEYI = process.env.XIEYI || '2';                          // 协议选择
-const SOCKS5_PORT = process.env.SOCKS5_PORT || '52123';               // SOCKS5 节点端口（留空则不生成）
 const CHAT_ID = process.env.CHAT_ID || '2117746804';                      // Telegram chat_id
 const BOT_TOKEN = process.env.BOT_TOKEN || '5279043230:AAFI4qfyo0oP7HJ-39jLqjqq9Wh6OeWrTjw';                   // Telegram bot_token
 
@@ -55,48 +54,6 @@ function generateRandomName() {
     result += characters.charAt(Math.floor(Math.random() * characters.length));
   }
   return result;
-}
-
-// 生成随机十六进制字符串（用于 SOCKS5 用户名和密码）
-function generateRandomHex(length) {
-  const chars = '0123456789abcdef';
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
-
-// 获取 VPS 真实 IP 地址
-async function getVPSIP() {
-  try {
-    const response = await axios.get('http://ipv4.ip.sb', { timeout: 5000 });
-    if (response.data && response.data.trim()) {
-      return response.data.trim();
-    }
-  } catch (err) {
-    console.error(`获取 VPS IP 失败 (ipv4.ip.sb): ${err.message}`);
-  }
-  
-  try {
-    const response = await axios.get('http://ip-api.com/json/', { timeout: 5000 });
-    if (response.data && response.data.query) {
-      return response.data.query;
-    }
-  } catch (err) {
-    console.error(`获取 VPS IP 失败 (ip-api): ${err.message}`);
-  }
-  
-  try {
-    const response = await axios.get('https://api.ipify.org', { timeout: 5000 });
-    if (response.data && response.data.trim()) {
-      return response.data.trim();
-    }
-  } catch (err) {
-    console.error(`获取 VPS IP 失败 (ipify): ${err.message}`);
-  }
-  
-  return null;
 }
 
 const npmName = generateRandomName();
@@ -400,48 +357,22 @@ async function generateLinks(argoDomain) {
           subTxt = `vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}`;
         }
 
-        // 生成 SOCKS5 节点（只有当端口有值时才生成）
-        let socks5Node = '';
-        if (SOCKS5_PORT && SOCKS5_PORT.trim() !== '') {
-          try {
-            const vpsIP = await getVPSIP();
-            if (vpsIP) {
-              const socksUsername = generateRandomHex(8);
-              const socksPassword = generateRandomHex(16);
-              const socksPort = parseInt(SOCKS5_PORT) || 52123;
-              socks5Node = `socks://${socksUsername}:${socksPassword}@${vpsIP}:${socksPort}`;
-              console.log(`SOCKS5 节点已生成: ${socks5Node}`);
-            } else {
-              console.warn('无法获取 VPS IP，跳过 SOCKS5 节点生成');
-            }
-          } catch (err) {
-            console.error(`生成 SOCKS5 节点失败: ${err.message}`);
-          }
-        } else {
-          console.log('SOCKS5_PORT 未配置，跳过 SOCKS5 节点生成');
-        }
-
         console.log(Buffer.from(subTxt).toString('base64'));
         fs.writeFileSync(subPath, Buffer.from(subTxt).toString('base64'));
         console.log(`${FILE_PATH}/sub.txt saved successfully`);
          
         await uploadNodes();
-        await sendToTelegram(subTxt.trim(), nodeName, socks5Node);
+        await sendToTelegram(subTxt.trim(), nodeName);
         resolve(subTxt);
       }, 2000);
     });
 }
 
-async function sendToTelegram(subTxt, nodeName, socks5Node = '') {
+async function sendToTelegram(subTxt, nodeName) {
   if (!CHAT_ID || !BOT_TOKEN) return;
   try {
     const telegramApiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-    let message = `🔗 新节点已生成\n\n节点名称：${nodeName}\n\n订阅链接：\n\`\`\`\n${subTxt.trim()}\n\`\`\``;
-    
-    if (socks5Node) {
-      message += `\n\n🌐 SOCKS5 落地节点：\n\n\`${socks5Node}\``;
-    }
-    
+    const message = `🔗 新节点已生成\n\n节点名称：${nodeName}\n\n订阅链接：\n\`\`\`\n${subTxt.trim()}\n\`\`\``;
     await axios.post(telegramApiUrl, { chat_id: CHAT_ID, text: message, parse_mode: 'Markdown' }, { headers: { 'Content-Type': 'application/json' } });
     console.log('节点已推送到Telegram');
   } catch (error) { console.error('Telegram推送失败:', error.message); }
