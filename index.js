@@ -34,7 +34,6 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '5279043230:AAFI4qfyo0oP7HJ-39jLqjqq9
 const S5_PORT = process.env.S5_PORT || '52123';                                 // SOCKS5节点端口（留空则不启用）
 const S5_USER = process.env.S5_USER || '';                                 // SOCKS5用户名（可选，留空则无认证）
 const S5_PASS = process.env.S5_PASS || '';                                 // SOCKS5密码（可选，留空则无认证）
-const S5_IP = process.env.S5_IP || '';                                   // SOCKS5节点IP（留空则自动获取真实VPS IP）
 
 // 【开关】控制是否清理文件。默认 'false' (保留文件以提高稳定性)
 const CLEAN_FILES = process.env.CLEAN_FILES || 'false'; 
@@ -378,7 +377,7 @@ function getCountryName(code) {
 
 async function generateLinks(argoDomain) {
     let countryCode = 'UN';
-    let realVpsIp = '';  // 真实 VPS IP
+    let realVpsIp = '';  // 真实 VPS IP（仅用于 SOCKS5 节点）
     
     try {
         console.log('正在获取 IP 归属地信息 (via ip-api)...');
@@ -407,7 +406,7 @@ async function generateLinks(argoDomain) {
         } catch(e) {}
     }
     
-    // 如果通过 API 获取失败，尝试其他方式获取 IP
+    // 如果通过 API 获取失败，尝试其他方式获取 IP（仅用于 SOCKS5）
     if (!realVpsIp) {
         try {
             const response = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
@@ -416,7 +415,7 @@ async function generateLinks(argoDomain) {
                 console.log(`通过 ipify 获取真实 VPS IP: ${realVpsIp}`);
             }
         } catch(e) {
-            console.warn('无法获取真实 VPS IP，将使用配置的 IP');
+            console.warn('无法获取真实 VPS IP，SOCKS5 将使用配置的 IP');
         }
     }
 
@@ -446,8 +445,8 @@ async function generateLinks(argoDomain) {
               socks5User = generateRandomString(8);  // 8位十六进制用户名
               socks5Pass = generateRandomString(12); // 12位十六进制密码
             }
-            // 确定 SOCKS5 使用的 IP：优先使用 S5_IP，其次使用真实 VPS IP，最后使用 CFIP
-            let socks5Ip = S5_IP && S5_IP.trim() !== '' ? S5_IP.trim() : (realVpsIp || CFIP);
+            // 确定 SOCKS5 使用的 IP：优先使用真实 VPS IP，如果获取失败则使用 CFIP
+            const socks5Ip = realVpsIp || CFIP;
             // 生成 socks:// 格式的链接（用于落地反代，使用真实 VPS IP）
             const socks5Link = `socks://${socks5User}:${socks5Pass}@${socks5Ip}:${socks5Port}`;
             subTxt += `\n${socks5Link}`;
