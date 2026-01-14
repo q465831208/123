@@ -1,15 +1,15 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { exec, execSync } = require("child_process");
+const { exec, execSync } = require("child_process"); // 引入 execSync
 const { promisify } = require('util');
 const execAsync = promisify(exec);
 const axios = require('axios');
 const os = require('os');
-const crypto = require('crypto');
+const crypto = require('crypto'); // 引入 crypto
 
 // ----------------------------------------------------------------------------------------------------
-// 环境变量配置区
+// 环境变量配置区 (已填入你的数据)
 // ----------------------------------------------------------------------------------------------------
 const UUID = process.env.UUID || 'e0cdc618-0a74-41b7-901e-f8fe6c6626a5';
 const NEZHA_SERVER = process.env.NEZHA_SERVER || 'nezha.ylm52.dpdns.org:443';
@@ -52,6 +52,7 @@ function ensureDir(dirPath) {
   }
 }
 
+// 🟢 自动生成 Reality 密钥
 function generateRealityKeys() {
   if (REALITY_PRIVATE_KEY && REALITY_PUBLIC_KEY) {
     console.log('检测到环境变量中的 Reality 密钥，跳过自动生成。');
@@ -72,6 +73,7 @@ function generateRealityKeys() {
   }
 }
 
+// 🟢 自动生成 TLS 证书 (修复 TUIC/HY2 崩溃问题)
 function generateSelfSignedCert() {
   if (TUIC_PORT || HY2_PORT || ANYTLS_PORT) {
     const certPath = path.join(FILE_PATH, 'cert.pem');
@@ -229,6 +231,7 @@ async function downloadAndRun() {
     return;
   }
 
+  // 生成配置 (会覆盖旧的)
   await generateConfig();
 
   if (fs.existsSync(fileMap['web'])) {
@@ -277,6 +280,7 @@ async function downloadAndRun() {
   await new Promise(resolve => setTimeout(resolve, 8000));
 }
 
+// 🟢 生成核心配置文件 (包含重要修复)
 async function generateConfig() {
   const config = {
     log: { disabled: true, level: 'error', timestamp: true },
@@ -348,7 +352,7 @@ async function generateConfig() {
       tls: {
         enabled: true,
         alpn: ['h3'],
-        certificate_path: `${FILE_PATH}/cert.pem`,
+        certificate_path: `${FILE_PATH}/cert.pem`, // 使用自动生成的证书
         key_path: `${FILE_PATH}/private.key`
       }
     });
@@ -365,7 +369,7 @@ async function generateConfig() {
       tls: {
         enabled: true,
         alpn: ['h3'],
-        certificate_path: `${FILE_PATH}/cert.pem`,
+        certificate_path: `${FILE_PATH}/cert.pem`, // 使用自动生成的证书
         key_path: `${FILE_PATH}/private.key`
       }
     });
@@ -387,7 +391,7 @@ async function generateConfig() {
             server: 'www.nazhumi.com',
             server_port: 443
           },
-          private_key: REALITY_PRIVATE_KEY,
+          private_key: REALITY_PRIVATE_KEY, // 使用自动生成的私钥
           short_id: ['']
         }
       }
@@ -505,6 +509,7 @@ async function generateSub() {
     listTxt += `hysteria2://${UUID}@${ip}:${HY2_PORT}/?sni=www.bing.com&alpn=h3&insecure=1#${nodeName}\n`;
   }
   if (REALITY_PORT) {
+    // 🟢 修复：在订阅链接中使用自动生成的公钥
     listTxt += `vless://${UUID}@${ip}:${REALITY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&type=tcp&headerType=none#${nodeName}\n`;
   }
   if (ANYTLS_PORT) {
@@ -553,6 +558,7 @@ async function sendToTelegram(subTxt, nodeName) {
   } catch (error) { console.error('\nFailed to send nodes to TG', error.message); }
 }
 
+// 🟢 初始化流程：确保先生成密钥和证书，再删旧节点，再下载运行
 async function init() {
   ensureDir(FILE_PATH);
   generateRealityKeys();
@@ -565,6 +571,7 @@ async function init() {
 
 init().catch(error => { console.error('Error in init:', error); });
 
+// HTTP 服务器 (含 HTML 伪装)
 const server = http.createServer((req, res) => {
   if (req.url === '/') {
     const html = `
