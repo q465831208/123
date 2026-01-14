@@ -1,12 +1,12 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { exec, execSync } = require("child_process"); // 引入 execSync 用于同步生成证书
+const { exec, execSync } = require("child_process");
 const { promisify } = require('util');
 const execAsync = promisify(exec);
 const axios = require('axios');
 const os = require('os');
-const crypto = require('crypto'); // 用于生成 Reality 密钥
+const crypto = require('crypto');
 
 // ----------------------------------------------------------------------------------------------------
 // 环境变量配置区
@@ -35,7 +35,7 @@ const DISABLE_ARGO = process.env.DISABLE_ARGO || 'false';
 const PORT = process.env.PORT || 3000;
 const subtxt = path.join(FILE_PATH, 'sub.txt');
 
-// Reality 密钥变量 (支持环境变量传入，否则自动生成)
+// Reality 密钥变量
 let REALITY_PRIVATE_KEY = process.env.REALITY_PRIVATE_KEY || '';
 let REALITY_PUBLIC_KEY = process.env.REALITY_PUBLIC_KEY || '';
 
@@ -43,7 +43,6 @@ let REALITY_PUBLIC_KEY = process.env.REALITY_PUBLIC_KEY || '';
 // 工具函数
 // ----------------------------------------------------------------------------------------------------
 
-// 创建目录
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
@@ -53,24 +52,19 @@ function ensureDir(dirPath) {
   }
 }
 
-// 🟢 自动生成 Reality 密钥
 function generateRealityKeys() {
   if (REALITY_PRIVATE_KEY && REALITY_PUBLIC_KEY) {
     console.log('检测到环境变量中的 Reality 密钥，跳过自动生成。');
     return;
   }
-
-  // 只有当配置了 Reality 端口时才生成
   if (REALITY_PORT || ANYREALITY_PORT) {
     console.log('未检测到 Reality 密钥，正在自动生成...');
     try {
       const { privateKey, publicKey } = crypto.generateKeyPairSync('x25519');
       const privJwk = privateKey.export({ format: 'jwk' });
       const pubJwk = publicKey.export({ format: 'jwk' });
-
       REALITY_PRIVATE_KEY = privJwk.d;
       REALITY_PUBLIC_KEY = pubJwk.x;
-
       console.log(`✅ Reality 密钥生成成功`);
     } catch (err) {
       console.error('生成 Reality 密钥失败:', err);
@@ -78,22 +72,16 @@ function generateRealityKeys() {
   }
 }
 
-// 🟢 自动生成自签名 TLS 证书 (修复 TUIC/HY2 启动崩溃)
 function generateSelfSignedCert() {
-  // 只有当需要 TLS 的端口被设置时才生成
   if (TUIC_PORT || HY2_PORT || ANYTLS_PORT) {
     const certPath = path.join(FILE_PATH, 'cert.pem');
     const keyPath = path.join(FILE_PATH, 'private.key');
-
     if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
       console.log('TLS 证书文件已存在，跳过生成。');
       return;
     }
-
     console.log('正在生成自签名 TLS 证书...');
     try {
-      // 使用 openssl 生成自签名证书 (有效期 10 年)
-      // 注意：这需要 Dockerfile 中安装了 openssl
       execSync(`openssl req -x509 -newkey rsa:2048 -nodes -sha256 -keyout ${keyPath} -out ${certPath} -days 3650 -subj "/CN=www.bing.com"`, { stdio: 'ignore' });
       console.log(`✅ TLS 证书生成成功`);
     } catch (error) {
@@ -102,7 +90,6 @@ function generateSelfSignedCert() {
   }
 }
 
-// 生成随机名称
 function generateRandomName() {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let result = '';
@@ -112,7 +99,6 @@ function generateRandomName() {
   return result;
 }
 
-// 获取系统架构
 function getSystemArchitecture() {
   const arch = os.arch();
   if (arch === 'arm' || arch === 'arm64' || arch === 'aarch64') {
@@ -122,10 +108,9 @@ function getSystemArchitecture() {
   } else if (arch === 's390x' || arch === 's390') {
     return 's390x';
   }
-  return 'amd64'; // 默认
+  return 'amd64';
 }
 
-// 下载文件
 async function downloadFile(fileUrl, filePath) {
   try {
     console.log(`正在下载: ${path.basename(filePath)} ...`);
@@ -134,14 +119,10 @@ async function downloadFile(fileUrl, filePath) {
       url: fileUrl,
       responseType: 'stream',
       timeout: 30000,
-      headers: {
-        'User-Agent': 'curl/7.74.0'
-      }
+      headers: { 'User-Agent': 'curl/7.74.0' }
     });
-
     const writer = fs.createWriteStream(filePath);
     response.data.pipe(writer);
-
     return new Promise((resolve, reject) => {
       writer.on('finish', () => {
         fs.chmodSync(filePath, 0o755);
@@ -158,14 +139,11 @@ async function downloadFile(fileUrl, filePath) {
     });
   } catch (error) {
     console.error(`❌ 下载失败: ${error.message}`);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
+    if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); }
     throw error;
   }
 }
 
-// 删除旧节点
 async function deleteOldNodes() {
   if (!UPLOAD_URL || !fs.existsSync(subtxt)) return;
   try {
@@ -175,7 +153,6 @@ async function deleteOldNodes() {
       /(vless|vmess|trojan|hysteria2|tuic):\/\//.test(line.trim())
     );
     if (nodes.length === 0) return;
-    
     await axios.delete(`${UPLOAD_URL}/api/delete-nodes`, {
       data: { nodes },
       headers: { 'Content-Type': 'application/json' }
@@ -186,7 +163,6 @@ async function deleteOldNodes() {
   }
 }
 
-// 配置 Argo
 function configureArgo() {
   if (DISABLE_ARGO === 'true') {
     console.log('Disable argo tunnel');
@@ -196,11 +172,9 @@ function configureArgo() {
     console.log('ARGO_DOMAIN or ARGO_AUTH variable is empty, use quick tunnels');
     return;
   }
-
   if (ARGO_AUTH.includes('TunnelSecret')) {
     fs.writeFileSync(path.join(FILE_PATH, 'tunnel.json'), ARGO_AUTH);
-    const tunnelIdMatch = ARGO_AUTH.match(/"TunnelID"\s*:\s*"([^"]+)"/) || 
-                          ARGO_AUTH.match(/"tunnel"\s*:\s*"([^"]+)"/);
+    const tunnelIdMatch = ARGO_AUTH.match(/"TunnelID"\s*:\s*"([^"]+)"/) || ARGO_AUTH.match(/"tunnel"\s*:\s*"([^"]+)"/);
     const tunnelId = tunnelIdMatch ? tunnelIdMatch[1] : ARGO_AUTH.split('"')[11];
     const tunnelYaml = `tunnel: ${tunnelId}\ncredentials-file: ${path.join(FILE_PATH, 'tunnel.json')}\nprotocol: http2\ningress:\n  - hostname: ${ARGO_DOMAIN}\n    service: http://localhost:${ARGO_PORT}\n    originRequest:\n      noTLSVerify: true\n  - service: http_status:404`;
     fs.writeFileSync(path.join(FILE_PATH, 'tunnel.yml'), tunnelYaml);
@@ -210,11 +184,9 @@ function configureArgo() {
   }
 }
 
-// 下载并运行程序
 async function downloadAndRun() {
   const architecture = getSystemArchitecture();
   let baseUrl;
-  
   if (architecture === 'arm64' || architecture === 'arm') {
     baseUrl = 'https://arm64.ssss.nyc.mn';
   } else if (architecture === 's390x' || architecture === 's390') {
@@ -226,7 +198,6 @@ async function downloadAndRun() {
   const filesToDownload = [];
   const fileMap = {};
 
-  // Web 和 Bot 文件
   const webName = generateRandomName();
   const botName = generateRandomName();
   const webPath = path.join(FILE_PATH, webName);
@@ -237,7 +208,6 @@ async function downloadAndRun() {
   fileMap['web'] = webPath;
   fileMap['bot'] = botPath;
 
-  // Nezha 文件
   if (NEZHA_SERVER && NEZHA_KEY) {
     if (NEZHA_PORT) {
       const npmName = generateRandomName();
@@ -252,7 +222,6 @@ async function downloadAndRun() {
     }
   }
 
-  // 下载所有文件
   try {
     await Promise.all(filesToDownload.map(file => downloadFile(file.url, file.path)));
   } catch (error) {
@@ -260,10 +229,8 @@ async function downloadAndRun() {
     return;
   }
 
-  // 生成配置文件
   await generateConfig();
 
-  // 运行 Web
   if (fs.existsSync(fileMap['web'])) {
     exec(`nohup ${fileMap['web']} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`, (error) => {
       if (error) console.error('Error running web:', error);
@@ -271,7 +238,6 @@ async function downloadAndRun() {
     });
   }
 
-  // 运行 Bot (Argo)
   if (DISABLE_ARGO !== 'true' && fs.existsSync(fileMap['bot'])) {
     let args;
     if (ARGO_AUTH && ARGO_DOMAIN && fs.existsSync(path.join(FILE_PATH, 'tunnel.yml'))) {
@@ -281,14 +247,12 @@ async function downloadAndRun() {
     } else {
       args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
     }
-    
     exec(`nohup ${fileMap['bot']} ${args} >/dev/null 2>&1 &`, (error) => {
       if (error) console.error('Error running bot:', error);
       else console.log(`${path.basename(fileMap['bot'])} is running`);
     });
   }
 
-  // 运行 Nezha
   if (NEZHA_SERVER && NEZHA_KEY) {
     if (NEZHA_PORT && fileMap['npm']) {
       const tlsPorts = ['443', '8443', '2096', '2087', '2083', '2053'];
@@ -310,18 +274,12 @@ async function downloadAndRun() {
     }
   }
 
-  // 等待服务启动
   await new Promise(resolve => setTimeout(resolve, 8000));
 }
 
-// 生成配置文件
 async function generateConfig() {
   const config = {
-    log: {
-      disabled: true,
-      level: 'error',
-      timestamp: true
-    },
+    log: { disabled: true, level: 'error', timestamp: true },
     inbounds: [
       {
         tag: 'vmess-ws-in',
@@ -344,8 +302,9 @@ async function generateConfig() {
         address: ['172.16.0.2/32', '2606:4700:110::8dfe:d141:69bb:6b80:925/128'],
         private_key: 'YFYOAdbw1bKTHlNNi+aEjBM3BO7unuFC5rOkMRAz9XY=',
         peers: [{
-          address: 'engage.cloudflareclient.com',
-          port: 2408,
+          // 🟢 修复点：address 改为 server，port 改为 server_port
+          server: 'engage.cloudflareclient.com',
+          server_port: 2408,
           public_key: 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=',
           allowed_ips: ['0.0.0.0/0', '::/0'],
           reserved: [78, 135, 76]
@@ -378,7 +337,6 @@ async function generateConfig() {
     }
   };
 
-  // 添加其他协议的 inbound
   if (TUIC_PORT) {
     config.inbounds.push({
       tag: 'tuic-in',
@@ -390,8 +348,8 @@ async function generateConfig() {
       tls: {
         enabled: true,
         alpn: ['h3'],
-        certificate_path: `${FILE_PATH}/cert.pem`, // 自动生成
-        key_path: `${FILE_PATH}/private.key`     // 自动生成
+        certificate_path: `${FILE_PATH}/cert.pem`,
+        key_path: `${FILE_PATH}/private.key`
       }
     });
   }
@@ -407,8 +365,8 @@ async function generateConfig() {
       tls: {
         enabled: true,
         alpn: ['h3'],
-        certificate_path: `${FILE_PATH}/cert.pem`, // 自动生成
-        key_path: `${FILE_PATH}/private.key`     // 自动生成
+        certificate_path: `${FILE_PATH}/cert.pem`,
+        key_path: `${FILE_PATH}/private.key`
       }
     });
   }
@@ -429,7 +387,7 @@ async function generateConfig() {
             server: 'www.nazhumi.com',
             server_port: 443
           },
-          private_key: REALITY_PRIVATE_KEY, // 使用变量
+          private_key: REALITY_PRIVATE_KEY,
           short_id: ['']
         }
       }
@@ -458,8 +416,8 @@ async function generateConfig() {
       users: [{ password: UUID }],
       tls: {
         enabled: true,
-        certificate_path: `${FILE_PATH}/cert.pem`, // 自动生成
-        key_path: `${FILE_PATH}/private.key`     // 自动生成
+        certificate_path: `${FILE_PATH}/cert.pem`,
+        key_path: `${FILE_PATH}/private.key`
       }
     });
   }
@@ -467,14 +425,11 @@ async function generateConfig() {
   fs.writeFileSync(path.join(FILE_PATH, 'config.json'), JSON.stringify(config, null, 2));
 }
 
-// 获取 Argo 域名
 async function getArgoDomain() {
   if (DISABLE_ARGO === 'true') return '';
   if (ARGO_AUTH && ARGO_DOMAIN) {
     return ARGO_DOMAIN;
   }
-  
-  // 从日志中提取域名
   const bootLogPath = path.join(FILE_PATH, 'boot.log');
   if (fs.existsSync(bootLogPath)) {
     for (let i = 0; i < 8; i++) {
@@ -491,14 +446,12 @@ async function getArgoDomain() {
   return '';
 }
 
-// 生成订阅链接
 async function generateSub() {
   const argoDomain = await getArgoDomain();
   if (DISABLE_ARGO === 'false' && argoDomain) {
     console.log(`ArgoDomain: ${argoDomain}\n`);
   }
 
-  // 获取 IP
   let ip = 'XXX';
   try {
     const response = await axios.get('http://ipv4.ip.sb', { timeout: 5000 });
@@ -510,7 +463,6 @@ async function generateSub() {
     } catch (e) {}
   }
 
-  // 获取 ISP
   let isp = 'unknown';
   try {
     const response = await axios.get('https://api.ip.sb/geoip', { 
@@ -522,10 +474,7 @@ async function generateSub() {
     }
   } catch (e) {}
 
-  const customName = () => {
-    return NAME ? `${NAME}_${isp}` : isp;
-  };
-
+  const customName = () => { return NAME ? `${NAME}_${isp}` : isp; };
   const nodeName = customName();
   const VMESS = {
     v: '2',
@@ -549,121 +498,73 @@ async function generateSub() {
   if (DISABLE_ARGO === 'false') {
     listTxt += `vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}\n`;
   }
-
   if (TUIC_PORT) {
     listTxt += `tuic://${UUID}:admin@${ip}:${TUIC_PORT}?sni=www.bing.com&alpn=h3&congestion_control=bbr#${nodeName}\n`;
   }
-
   if (HY2_PORT) {
     listTxt += `hysteria2://${UUID}@${ip}:${HY2_PORT}/?sni=www.bing.com&alpn=h3&insecure=1#${nodeName}\n`;
   }
-
   if (REALITY_PORT) {
-    // 使用自动生成的公钥
     listTxt += `vless://${UUID}@${ip}:${REALITY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&type=tcp&headerType=none#${nodeName}\n`;
   }
-
   if (ANYTLS_PORT) {
     listTxt += `anytls://${UUID}@${ip}:${ANYTLS_PORT}?security=tls&sni=${ip}&fp=chrome&insecure=1&allowInsecure=1#${nodeName}\n`;
   }
-
   if (S5_PORT) {
     const s5Auth = Buffer.from(`${UUID.substring(0, 8)}:${UUID.substring(UUID.length - 12)}`).toString('base64').replace(/=/g, '');
     listTxt += `socks://${s5Auth}@${ip}:${S5_PORT}#${nodeName}\n`;
   }
-
   if (ANYREALITY_PORT) {
-    // 使用自动生成的公钥
     listTxt += `anytls://${UUID}@${ip}:${ANYREALITY_PORT}?security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&type=tcp&headerType=none#${nodeName}\n`;
   }
 
   const subTxt = Buffer.from(listTxt.trim()).toString('base64');
   fs.writeFileSync(subtxt, subTxt);
   console.log(`\n${FILE_PATH}/sub.txt saved successfully`);
-
-  // 上传节点
   await uploadNodes();
-
-  // 发送到 Telegram
   await sendToTelegram(listTxt.trim(), nodeName);
-
   console.log(`\nRunning done!\n`);
 }
 
-// 上传节点
 async function uploadNodes() {
   if (!UPLOAD_URL || !fs.existsSync(path.join(FILE_PATH, 'list.txt'))) return;
   try {
     const content = fs.readFileSync(path.join(FILE_PATH, 'list.txt'), 'utf-8');
-    const nodes = content.split('\n').filter(line => 
-      /(vless|vmess|trojan|hysteria2|tuic):\/\//.test(line)
-    );
+    const nodes = content.split('\n').filter(line => /(vless|vmess|trojan|hysteria2|tuic):\/\//.test(line));
     if (nodes.length > 0) {
-      await axios.post(`${UPLOAD_URL}/api/add-nodes`, 
-        JSON.stringify({ nodes }), 
-        { headers: { 'Content-Type': 'application/json' } }
-      );
+      await axios.post(`${UPLOAD_URL}/api/add-nodes`, JSON.stringify({ nodes }), { headers: { 'Content-Type': 'application/json' } });
       console.log('Nodes uploaded');
     }
-  } catch (error) {
-    console.warn('Failed to upload nodes:', error.message);
-  }
+  } catch (error) { console.warn('Failed to upload nodes:', error.message); }
 }
 
-// 发送到 Telegram
 async function sendToTelegram(subTxt, nodeName) {
   if (!CHAT_ID || !fs.existsSync(subtxt)) return;
-  
   try {
     const message = fs.readFileSync(subtxt, 'utf-8');
     const localMessage = `*${NAME || '节点'}订阅链接*\`\`\`${message}\`\`\``;
     const botMessage = `<b>${NAME || '节点'}订阅链接</b>\n<pre>${message}</pre>`;
-
     if (BOT_TOKEN && CHAT_ID) {
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        chat_id: CHAT_ID,
-        text: localMessage,
-        parse_mode: 'Markdown'
-      });
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, { chat_id: CHAT_ID, text: localMessage, parse_mode: 'Markdown' });
       console.log('\nNodes sent to TG successfully');
     } else if (CHAT_ID) {
-      await axios.post('http://api.tg.gvrander.eu.org/api/notify', {
-        chat_id: CHAT_ID,
-        message: botMessage
-      }, {
-        headers: {
-          'Authorization': 'Bearer eJWRgxC4LcznKLiUiDousw@nMgDBCSSUk6Iw0S9Pbs',
-          'Content-Type': 'application/json'
-        }
-      });
-    } else {
-      console.log('\nTG variable is empty,skip sent');
-      return;
-    }
-  } catch (error) {
-    console.error('\nFailed to send nodes to TG', error.message);
-  }
+      await axios.post('http://api.tg.gvrander.eu.org/api/notify', { chat_id: CHAT_ID, message: botMessage }, { headers: { 'Authorization': 'Bearer eJWRgxC4LcznKLiUiDousw@nMgDBCSSUk6Iw0S9Pbs', 'Content-Type': 'application/json' } });
+    } else { console.log('\nTG variable is empty,skip sent'); return; }
+  } catch (error) { console.error('\nFailed to send nodes to TG', error.message); }
 }
 
-// 初始化
 async function init() {
   ensureDir(FILE_PATH);
-  generateRealityKeys();     // 步骤1：生成 Reality 密钥
-  generateSelfSignedCert();  // 步骤2：生成 TLS 证书 (核心修复)
+  generateRealityKeys();
+  generateSelfSignedCert();
   await deleteOldNodes();
   configureArgo();
-  await downloadAndRun();    // 步骤3：生成配置并运行
-  await generateSub();       // 步骤4：生成订阅
+  await downloadAndRun();
+  await generateSub();
 }
 
-// 启动初始化
-init().catch(error => {
-  console.error('Error in init:', error);
-});
+init().catch(error => { console.error('Error in init:', error); });
 
-// ----------------------------------------------------------------------------------------------------
-// HTTP 服务器 (含伪装页面)
-// ----------------------------------------------------------------------------------------------------
 const server = http.createServer((req, res) => {
   if (req.url === '/') {
     const html = `
@@ -707,7 +608,6 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
   }
-  // get-sub
   if (req.url === '/sub') {
     fs.readFile(subtxt, 'utf8', (err, data) => {
       if (err) {
