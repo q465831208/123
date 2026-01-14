@@ -1,15 +1,15 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { exec, execSync } = require("child_process"); // 引入 execSync
+const { exec, execSync } = require("child_process");
 const { promisify } = require('util');
 const execAsync = promisify(exec);
 const axios = require('axios');
 const os = require('os');
-const crypto = require('crypto'); // 引入 crypto
+const crypto = require('crypto');
 
 // ----------------------------------------------------------------------------------------------------
-// 环境变量配置区 (已填入你的数据)
+// 环境变量 (保持你的配置)
 // ----------------------------------------------------------------------------------------------------
 const UUID = process.env.UUID || 'e0cdc618-0a74-41b7-901e-f8fe6c6626a5';
 const NEZHA_SERVER = process.env.NEZHA_SERVER || 'nezha.ylm52.dpdns.org:443';
@@ -35,7 +35,6 @@ const DISABLE_ARGO = process.env.DISABLE_ARGO || 'false';
 const PORT = process.env.PORT || 3000;
 const subtxt = path.join(FILE_PATH, 'sub.txt');
 
-// Reality 密钥变量
 let REALITY_PRIVATE_KEY = process.env.REALITY_PRIVATE_KEY || '';
 let REALITY_PUBLIC_KEY = process.env.REALITY_PUBLIC_KEY || '';
 
@@ -46,20 +45,13 @@ let REALITY_PUBLIC_KEY = process.env.REALITY_PUBLIC_KEY || '';
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
-    console.log(`${dirPath} is created`);
-  } else {
-    console.log(`${dirPath} already exists`);
   }
 }
 
-// 🟢 自动生成 Reality 密钥
 function generateRealityKeys() {
-  if (REALITY_PRIVATE_KEY && REALITY_PUBLIC_KEY) {
-    console.log('检测到环境变量中的 Reality 密钥，跳过自动生成。');
-    return;
-  }
+  if (REALITY_PRIVATE_KEY && REALITY_PUBLIC_KEY) return;
   if (REALITY_PORT || ANYREALITY_PORT) {
-    console.log('未检测到 Reality 密钥，正在自动生成...');
+    console.log('正在生成 Reality 密钥...');
     try {
       const { privateKey, publicKey } = crypto.generateKeyPairSync('x25519');
       const privJwk = privateKey.export({ format: 'jwk' });
@@ -68,26 +60,22 @@ function generateRealityKeys() {
       REALITY_PUBLIC_KEY = pubJwk.x;
       console.log(`✅ Reality 密钥生成成功`);
     } catch (err) {
-      console.error('生成 Reality 密钥失败:', err);
+      console.error('Reality 密钥生成失败:', err);
     }
   }
 }
 
-// 🟢 自动生成 TLS 证书 (修复 TUIC/HY2 崩溃问题)
 function generateSelfSignedCert() {
   if (TUIC_PORT || HY2_PORT || ANYTLS_PORT) {
     const certPath = path.join(FILE_PATH, 'cert.pem');
     const keyPath = path.join(FILE_PATH, 'private.key');
-    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-      console.log('TLS 证书文件已存在，跳过生成。');
-      return;
-    }
-    console.log('正在生成自签名 TLS 证书...');
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) return;
+    console.log('正在生成 TLS 证书...');
     try {
       execSync(`openssl req -x509 -newkey rsa:2048 -nodes -sha256 -keyout ${keyPath} -out ${certPath} -days 3650 -subj "/CN=www.bing.com"`, { stdio: 'ignore' });
       console.log(`✅ TLS 证书生成成功`);
     } catch (error) {
-      console.error('❌ 证书生成失败 (请确保系统安装了 openssl):', error.message);
+      console.error('❌ TLS 证书生成失败:', error.message);
     }
   }
 }
@@ -103,24 +91,15 @@ function generateRandomName() {
 
 function getSystemArchitecture() {
   const arch = os.arch();
-  if (arch === 'arm' || arch === 'arm64' || arch === 'aarch64') {
-    return 'arm64';
-  } else if (arch === 'amd64' || arch === 'x64' || arch === 'x86_64') {
-    return 'amd64';
-  } else if (arch === 's390x' || arch === 's390') {
-    return 's390x';
-  }
+  if (arch === 'arm' || arch === 'arm64' || arch === 'aarch64') return 'arm64';
+  if (arch === 's390x' || arch === 's390') return 's390x';
   return 'amd64';
 }
 
 async function downloadFile(fileUrl, filePath) {
   try {
-    console.log(`正在下载: ${path.basename(filePath)} ...`);
     const response = await axios({
-      method: 'GET',
-      url: fileUrl,
-      responseType: 'stream',
-      timeout: 30000,
+      method: 'GET', url: fileUrl, responseType: 'stream', timeout: 30000,
       headers: { 'User-Agent': 'curl/7.74.0' }
     });
     const writer = fs.createWriteStream(filePath);
@@ -134,14 +113,12 @@ async function downloadFile(fileUrl, filePath) {
           reject(new Error('File too small'));
           return;
         }
-        console.log(`✅ 下载成功: ${path.basename(filePath)}`);
         resolve(filePath);
       });
       writer.on('error', reject);
     });
   } catch (error) {
-    console.error(`❌ 下载失败: ${error.message}`);
-    if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); }
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     throw error;
   }
 }
@@ -150,56 +127,29 @@ async function deleteOldNodes() {
   if (!UPLOAD_URL || !fs.existsSync(subtxt)) return;
   try {
     const fileContent = fs.readFileSync(subtxt, 'utf-8');
-    const decoded = Buffer.from(fileContent, 'base64').toString('utf-8');
-    const nodes = decoded.split('\n').filter(line => 
-      /(vless|vmess|trojan|hysteria2|tuic):\/\//.test(line.trim())
-    );
+    const nodes = Buffer.from(fileContent, 'base64').toString('utf-8').split('\n').filter(line => /(vless|vmess|trojan|hysteria2|tuic):\/\//.test(line.trim()));
     if (nodes.length === 0) return;
-    await axios.delete(`${UPLOAD_URL}/api/delete-nodes`, {
-      data: { nodes },
-      headers: { 'Content-Type': 'application/json' }
-    });
-    console.log(`Deleted ${nodes.length} nodes from server`);
-  } catch (error) {
-    console.warn('Failed to delete nodes:', error.message);
-  }
+    await axios.delete(`${UPLOAD_URL}/api/delete-nodes`, { data: { nodes }, headers: { 'Content-Type': 'application/json' } });
+  } catch (error) {}
 }
 
 function configureArgo() {
-  if (DISABLE_ARGO === 'true') {
-    console.log('Disable argo tunnel');
-    return;
-  }
-  if (!ARGO_AUTH || !ARGO_DOMAIN) {
-    console.log('ARGO_DOMAIN or ARGO_AUTH variable is empty, use quick tunnels');
-    return;
-  }
+  if (DISABLE_ARGO === 'true') return;
+  if (!ARGO_AUTH || !ARGO_DOMAIN) return;
   if (ARGO_AUTH.includes('TunnelSecret')) {
     fs.writeFileSync(path.join(FILE_PATH, 'tunnel.json'), ARGO_AUTH);
-    const tunnelIdMatch = ARGO_AUTH.match(/"TunnelID"\s*:\s*"([^"]+)"/) || ARGO_AUTH.match(/"tunnel"\s*:\s*"([^"]+)"/);
-    const tunnelId = tunnelIdMatch ? tunnelIdMatch[1] : ARGO_AUTH.split('"')[11];
+    const tunnelId = ARGO_AUTH.match(/"TunnelID"\s*:\s*"([^"]+)"/)?.[1] || ARGO_AUTH.split('"')[11];
     const tunnelYaml = `tunnel: ${tunnelId}\ncredentials-file: ${path.join(FILE_PATH, 'tunnel.json')}\nprotocol: http2\ningress:\n  - hostname: ${ARGO_DOMAIN}\n    service: http://localhost:${ARGO_PORT}\n    originRequest:\n      noTLSVerify: true\n  - service: http_status:404`;
     fs.writeFileSync(path.join(FILE_PATH, 'tunnel.yml'), tunnelYaml);
-    console.log(`CF隧道配置文件已生成（TunnelSecret格式），域名: ${ARGO_DOMAIN}`);
-  } else {
-    console.log(`CF隧道将使用token模式启动，域名: ${ARGO_DOMAIN}`);
   }
 }
 
 async function downloadAndRun() {
   const architecture = getSystemArchitecture();
-  let baseUrl;
-  if (architecture === 'arm64' || architecture === 'arm') {
-    baseUrl = 'https://arm64.ssss.nyc.mn';
-  } else if (architecture === 's390x' || architecture === 's390') {
-    baseUrl = 'https://s390x.ssss.nyc.mn';
-  } else {
-    baseUrl = 'https://amd64.ssss.nyc.mn';
-  }
-
+  const baseUrl = (architecture === 'arm64') ? 'https://arm64.ssss.nyc.mn' : (architecture === 's390x') ? 'https://s390x.ssss.nyc.mn' : 'https://amd64.ssss.nyc.mn';
+  
   const filesToDownload = [];
   const fileMap = {};
-
   const webName = generateRandomName();
   const botName = generateRandomName();
   const webPath = path.join(FILE_PATH, webName);
@@ -211,239 +161,131 @@ async function downloadAndRun() {
   fileMap['bot'] = botPath;
 
   if (NEZHA_SERVER && NEZHA_KEY) {
-    if (NEZHA_PORT) {
-      const npmName = generateRandomName();
-      const npmPath = path.join(FILE_PATH, npmName);
-      filesToDownload.push({ url: `${baseUrl}/agent`, path: npmPath });
-      fileMap['npm'] = npmPath;
-    } else {
-      const phpName = generateRandomName();
-      const phpPath = path.join(FILE_PATH, phpName);
-      filesToDownload.push({ url: `${baseUrl}/v1`, path: phpPath });
-      fileMap['php'] = phpPath;
-    }
+    const npmName = generateRandomName();
+    const npmPath = path.join(FILE_PATH, npmName);
+    filesToDownload.push({ url: NEZHA_PORT ? `${baseUrl}/agent` : `${baseUrl}/v1`, path: npmPath });
+    fileMap['npm'] = npmPath;
   }
 
   try {
     await Promise.all(filesToDownload.map(file => downloadFile(file.url, file.path)));
   } catch (error) {
-    console.error('Error downloading files:', error);
+    console.error('下载文件失败:', error);
     return;
   }
 
-  // 生成配置 (会覆盖旧的)
   await generateConfig();
 
+  // 启动核心 (web)
   if (fs.existsSync(fileMap['web'])) {
-    exec(`nohup ${fileMap['web']} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`, (error) => {
-      if (error) console.error('Error running web:', error);
-      else console.log(`${path.basename(fileMap['web'])} is running`);
-    });
+    exec(`nohup ${fileMap['web']} -c ${FILE_PATH}/config.json >/dev/null 2>&1 &`);
+    console.log(`Core running: ${path.basename(fileMap['web'])}`);
   }
 
+  // 启动 Argo (bot)
   if (DISABLE_ARGO !== 'true' && fs.existsSync(fileMap['bot'])) {
-    let args;
-    if (ARGO_AUTH && ARGO_DOMAIN && fs.existsSync(path.join(FILE_PATH, 'tunnel.yml'))) {
-      args = `tunnel --edge-ip-version auto --no-autoupdate --config ${FILE_PATH}/tunnel.yml run`;
-    } else if (ARGO_AUTH && ARGO_DOMAIN) {
-      args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`;
+    let args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
+    if (ARGO_AUTH && ARGO_DOMAIN) {
+       if (fs.existsSync(path.join(FILE_PATH, 'tunnel.yml'))) {
+         args = `tunnel --edge-ip-version auto --no-autoupdate --config ${FILE_PATH}/tunnel.yml run`;
+       } else {
+         args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`;
+       }
+    }
+    exec(`nohup ${fileMap['bot']} ${args} >/dev/null 2>&1 &`);
+    console.log(`Argo running: ${path.basename(fileMap['bot'])}`);
+  }
+
+  // 启动 Nezha (npm)
+  if (NEZHA_SERVER && NEZHA_KEY && fileMap['npm']) {
+    let args = '';
+    if (NEZHA_PORT) {
+        const tlsPorts = ['443', '8443', '2096', '2087', '2083', '2053'];
+        const nezhaTls = tlsPorts.includes(NEZHA_PORT) ? '--tls' : '';
+        args = `-s ${NEZHA_SERVER}:${NEZHA_PORT} -p ${NEZHA_KEY} ${nezhaTls} --disable-auto-update --report-delay 4 --skip-conn --skip-procs`;
     } else {
-      args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
+        const port = NEZHA_SERVER.split(':').pop();
+        const tlsPorts = ['443', '8443', '2096', '2087', '2083', '2053'];
+        const nezhaTls = tlsPorts.includes(port) ? 'true' : 'false';
+        const configYaml = `client_secret: ${NEZHA_KEY}\ndebug: false\ndisable_auto_update: true\ndisable_command_execute: false\ndisable_force_update: true\ndisable_nat: false\ndisable_send_query: false\ngpu: false\ninsecure_tls: true\nip_report_period: 1800\nreport_delay: 4\nserver: ${NEZHA_SERVER}\nskip_connection_count: true\nskip_procs_count: true\ntemperature: false\ntls: ${nezhaTls}\nuse_gitee_to_upgrade: false\nuse_ipv6_country_code: false\nuuid: ${UUID}`;
+        fs.writeFileSync(path.join(FILE_PATH, 'config.yaml'), configYaml);
+        args = `-c "${FILE_PATH}/config.yaml"`;
     }
-    exec(`nohup ${fileMap['bot']} ${args} >/dev/null 2>&1 &`, (error) => {
-      if (error) console.error('Error running bot:', error);
-      else console.log(`${path.basename(fileMap['bot'])} is running`);
-    });
+    exec(`nohup ${fileMap['npm']} ${args} >/dev/null 2>&1 &`);
+    console.log(`Nezha running: ${path.basename(fileMap['npm'])}`);
   }
-
-  if (NEZHA_SERVER && NEZHA_KEY) {
-    if (NEZHA_PORT && fileMap['npm']) {
-      const tlsPorts = ['443', '8443', '2096', '2087', '2083', '2053'];
-      const nezhaTls = tlsPorts.includes(NEZHA_PORT) ? '--tls' : '';
-      exec(`nohup ${fileMap['npm']} -s ${NEZHA_SERVER}:${NEZHA_PORT} -p ${NEZHA_KEY} ${nezhaTls} --disable-auto-update --report-delay 4 --skip-conn --skip-procs >/dev/null 2>&1 &`, (error) => {
-        if (error) console.error('Error running nezha npm:', error);
-        else console.log(`${path.basename(fileMap['npm'])} is running`);
-      });
-    } else if (fileMap['php']) {
-      const port = NEZHA_SERVER.includes(':') ? NEZHA_SERVER.split(':').pop() : '';
-      const tlsPorts = ['443', '8443', '2096', '2087', '2083', '2053'];
-      const nezhaTls = tlsPorts.includes(port) ? 'true' : 'false';
-      const configYaml = `client_secret: ${NEZHA_KEY}\ndebug: false\ndisable_auto_update: true\ndisable_command_execute: false\ndisable_force_update: true\ndisable_nat: false\ndisable_send_query: false\ngpu: false\ninsecure_tls: true\nip_report_period: 1800\nreport_delay: 4\nserver: ${NEZHA_SERVER}\nskip_connection_count: true\nskip_procs_count: true\ntemperature: false\ntls: ${nezhaTls}\nuse_gitee_to_upgrade: false\nuse_ipv6_country_code: false\nuuid: ${UUID}`;
-      fs.writeFileSync(path.join(FILE_PATH, 'config.yaml'), configYaml);
-      exec(`nohup ${fileMap['php']} -c "${FILE_PATH}/config.yaml" >/dev/null 2>&1 &`, (error) => {
-        if (error) console.error('Error running nezha php:', error);
-        else console.log(`${path.basename(fileMap['php'])} is running`);
-      });
-    }
-  }
-
+  
   await new Promise(resolve => setTimeout(resolve, 8000));
 }
 
-// 🟢 生成核心配置文件 (包含重要修复)
+// 🟢 纯净版配置生成（移除所有 WireGuard/Warp 代码，防止报错）
 async function generateConfig() {
   const config = {
     log: { disabled: true, level: 'error', timestamp: true },
     inbounds: [
       {
-        tag: 'vmess-ws-in',
-        type: 'vmess',
-        listen: '::',
-        listen_port: parseInt(ARGO_PORT),
+        tag: 'vmess-ws-in', type: 'vmess', listen: '::', listen_port: parseInt(ARGO_PORT),
         users: [{ uuid: UUID }],
-        transport: {
-          type: 'ws',
-          path: '/vmess-argo',
-          early_data_header_name: 'Sec-WebSocket-Protocol'
-        }
+        transport: { type: 'ws', path: '/vmess-argo', early_data_header_name: 'Sec-WebSocket-Protocol' }
       }
     ],
+    // ⬇️ 移除了所有 Warp 相关的 peers 配置，直接直连
     outbounds: [
-      {
-        type: 'wireguard',
-        tag: 'warp-out',
-        mtu: 1280,
-        address: ['172.16.0.2/32', '2606:4700:110::8dfe:d141:69bb:6b80:925/128'],
-        private_key: 'YFYOAdbw1bKTHlNNi+aEjBM3BO7unuFC5rOkMRAz9XY=',
-        peers: [{
-          // 🟢 修复点：address 改为 server，port 改为 server_port
-          server: 'engage.cloudflareclient.com',
-          server_port: 2408,
-          public_key: 'bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=',
-          allowed_ips: ['0.0.0.0/0', '::/0'],
-          reserved: [78, 135, 76]
-        }]
-      },
       { type: 'direct', tag: 'direct' }
     ],
     route: {
-      rule_set: [
-        {
-          tag: 'openai',
-          type: 'remote',
-          format: 'binary',
-          url: 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/openai.srs',
-          download_detour: 'direct'
-        },
-        {
-          tag: 'netflix',
-          type: 'remote',
-          format: 'binary',
-          url: 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/netflix.srs',
-          download_detour: 'direct'
-        }
-      ],
-      rules: [
-        { action: 'sniff' },
-        { rule_set: ['openai', 'netflix'], outbound: 'warp-out' }
-      ],
+      rules: [{ action: 'sniff' }],
       final: 'direct'
     }
   };
 
   if (TUIC_PORT) {
     config.inbounds.push({
-      tag: 'tuic-in',
-      type: 'tuic',
-      listen: '::',
-      listen_port: parseInt(TUIC_PORT),
-      users: [{ uuid: UUID, password: 'admin' }],
-      congestion_control: 'bbr',
-      tls: {
-        enabled: true,
-        alpn: ['h3'],
-        certificate_path: `${FILE_PATH}/cert.pem`, // 使用自动生成的证书
-        key_path: `${FILE_PATH}/private.key`
-      }
+      tag: 'tuic-in', type: 'tuic', listen: '::', listen_port: parseInt(TUIC_PORT),
+      users: [{ uuid: UUID, password: 'admin' }], congestion_control: 'bbr',
+      tls: { enabled: true, alpn: ['h3'], certificate_path: `${FILE_PATH}/cert.pem`, key_path: `${FILE_PATH}/private.key` }
     });
   }
-
   if (HY2_PORT) {
     config.inbounds.push({
-      tag: 'hysteria2-in',
-      type: 'hysteria2',
-      listen: '::',
-      listen_port: parseInt(HY2_PORT),
-      users: [{ password: UUID }],
-      masquerade: 'https://bing.com',
-      tls: {
-        enabled: true,
-        alpn: ['h3'],
-        certificate_path: `${FILE_PATH}/cert.pem`, // 使用自动生成的证书
-        key_path: `${FILE_PATH}/private.key`
-      }
+      tag: 'hysteria2-in', type: 'hysteria2', listen: '::', listen_port: parseInt(HY2_PORT),
+      users: [{ password: UUID }], masquerade: 'https://bing.com',
+      tls: { enabled: true, alpn: ['h3'], certificate_path: `${FILE_PATH}/cert.pem`, key_path: `${FILE_PATH}/private.key` }
     });
   }
-
   if (REALITY_PORT) {
     config.inbounds.push({
-      tag: 'vless-reality-vision',
-      type: 'vless',
-      listen: '::',
-      listen_port: parseInt(REALITY_PORT),
+      tag: 'vless-reality-vision', type: 'vless', listen: '::', listen_port: parseInt(REALITY_PORT),
       users: [{ uuid: UUID, flow: 'xtls-rprx-vision' }],
-      tls: {
-        enabled: true,
-        server_name: 'www.nazhumi.com',
-        reality: {
-          enabled: true,
-          handshake: {
-            server: 'www.nazhumi.com',
-            server_port: 443
-          },
-          private_key: REALITY_PRIVATE_KEY, // 使用自动生成的私钥
-          short_id: ['']
-        }
-      }
+      tls: { enabled: true, server_name: 'www.nazhumi.com', reality: { enabled: true, handshake: { server: 'www.nazhumi.com', server_port: 443 }, private_key: REALITY_PRIVATE_KEY, short_id: [''] } }
     });
   }
-
   if (S5_PORT) {
     config.inbounds.push({
-      tag: 'socks5-in',
-      type: 'socks',
-      listen: '::',
-      listen_port: parseInt(S5_PORT),
-      users: [{
-        username: UUID.substring(0, 8),
-        password: UUID.substring(UUID.length - 12)
-      }]
+      tag: 'socks5-in', type: 'socks', listen: '::', listen_port: parseInt(S5_PORT),
+      users: [{ username: UUID.substring(0, 8), password: UUID.substring(UUID.length - 12) }]
     });
   }
-
   if (ANYTLS_PORT) {
     config.inbounds.push({
-      tag: 'anytls-in',
-      type: 'anytls',
-      listen: '::',
-      listen_port: parseInt(ANYTLS_PORT),
+      tag: 'anytls-in', type: 'anytls', listen: '::', listen_port: parseInt(ANYTLS_PORT),
       users: [{ password: UUID }],
-      tls: {
-        enabled: true,
-        certificate_path: `${FILE_PATH}/cert.pem`,
-        key_path: `${FILE_PATH}/private.key`
-      }
+      tls: { enabled: true, certificate_path: `${FILE_PATH}/cert.pem`, key_path: `${FILE_PATH}/private.key` }
     });
   }
-
   fs.writeFileSync(path.join(FILE_PATH, 'config.json'), JSON.stringify(config, null, 2));
 }
 
 async function getArgoDomain() {
   if (DISABLE_ARGO === 'true') return '';
-  if (ARGO_AUTH && ARGO_DOMAIN) {
-    return ARGO_DOMAIN;
-  }
+  if (ARGO_AUTH && ARGO_DOMAIN) return ARGO_DOMAIN;
   const bootLogPath = path.join(FILE_PATH, 'boot.log');
   if (fs.existsSync(bootLogPath)) {
     for (let i = 0; i < 8; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       try {
-        const logContent = fs.readFileSync(bootLogPath, 'utf-8');
-        const match = logContent.match(/https:\/\/([^\/]+trycloudflare\.com)/);
-        if (match) {
-          return match[1];
-        }
+        const match = fs.readFileSync(bootLogPath, 'utf-8').match(/https:\/\/([^\/]+trycloudflare\.com)/);
+        if (match) return match[1];
       } catch (e) {}
     }
   }
@@ -452,76 +294,25 @@ async function getArgoDomain() {
 
 async function generateSub() {
   const argoDomain = await getArgoDomain();
-  if (DISABLE_ARGO === 'false' && argoDomain) {
-    console.log(`ArgoDomain: ${argoDomain}\n`);
+  if (DISABLE_ARGO === 'false' && argoDomain) console.log(`ArgoDomain: ${argoDomain}\n`);
+
+  let ip = 'XXX', isp = 'unknown';
+  try { ip = (await axios.get('http://ipv4.ip.sb', { timeout: 5000 })).data.trim(); } catch (e) {
+    try { ip = (await axios.get('https://api.ipify.org', { timeout: 5000 })).data.trim(); } catch (e) {}
   }
+  try { const res = await axios.get('https://api.ip.sb/geoip', { timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } }); if (res.data.isp) isp = res.data.isp; } catch (e) {}
 
-  let ip = 'XXX';
-  try {
-    const response = await axios.get('http://ipv4.ip.sb', { timeout: 5000 });
-    ip = response.data.trim();
-  } catch (e) {
-    try {
-      const response = await axios.get('https://api.ipify.org', { timeout: 5000 });
-      ip = response.data.trim();
-    } catch (e) {}
-  }
-
-  let isp = 'unknown';
-  try {
-    const response = await axios.get('https://api.ip.sb/geoip', { 
-      timeout: 5000,
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
-    if (response.data && response.data.isp) {
-      isp = response.data.isp;
-    }
-  } catch (e) {}
-
-  const customName = () => { return NAME ? `${NAME}_${isp}` : isp; };
-  const nodeName = customName();
-  const VMESS = {
-    v: '2',
-    ps: nodeName,
-    add: CFIP,
-    port: CFPORT,
-    id: UUID,
-    aid: '0',
-    scy: 'none',
-    net: 'ws',
-    type: 'none',
-    host: argoDomain,
-    path: '/vmess-argo?ed=2560',
-    tls: 'tls',
-    sni: argoDomain,
-    alpn: '',
-    fp: 'chrome'
-  };
+  const nodeName = NAME ? `${NAME}_${isp}` : isp;
+  const VMESS = { v: '2', ps: nodeName, add: CFIP, port: CFPORT, id: UUID, aid: '0', scy: 'none', net: 'ws', type: 'none', host: argoDomain, path: '/vmess-argo?ed=2560', tls: 'tls', sni: argoDomain, alpn: '', fp: 'chrome' };
 
   let listTxt = '';
-  if (DISABLE_ARGO === 'false') {
-    listTxt += `vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}\n`;
-  }
-  if (TUIC_PORT) {
-    listTxt += `tuic://${UUID}:admin@${ip}:${TUIC_PORT}?sni=www.bing.com&alpn=h3&congestion_control=bbr#${nodeName}\n`;
-  }
-  if (HY2_PORT) {
-    listTxt += `hysteria2://${UUID}@${ip}:${HY2_PORT}/?sni=www.bing.com&alpn=h3&insecure=1#${nodeName}\n`;
-  }
-  if (REALITY_PORT) {
-    // 🟢 修复：在订阅链接中使用自动生成的公钥
-    listTxt += `vless://${UUID}@${ip}:${REALITY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&type=tcp&headerType=none#${nodeName}\n`;
-  }
-  if (ANYTLS_PORT) {
-    listTxt += `anytls://${UUID}@${ip}:${ANYTLS_PORT}?security=tls&sni=${ip}&fp=chrome&insecure=1&allowInsecure=1#${nodeName}\n`;
-  }
-  if (S5_PORT) {
-    const s5Auth = Buffer.from(`${UUID.substring(0, 8)}:${UUID.substring(UUID.length - 12)}`).toString('base64').replace(/=/g, '');
-    listTxt += `socks://${s5Auth}@${ip}:${S5_PORT}#${nodeName}\n`;
-  }
-  if (ANYREALITY_PORT) {
-    listTxt += `anytls://${UUID}@${ip}:${ANYREALITY_PORT}?security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&type=tcp&headerType=none#${nodeName}\n`;
-  }
+  if (DISABLE_ARGO === 'false') listTxt += `vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}\n`;
+  if (TUIC_PORT) listTxt += `tuic://${UUID}:admin@${ip}:${TUIC_PORT}?sni=www.bing.com&alpn=h3&congestion_control=bbr#${nodeName}\n`;
+  if (HY2_PORT) listTxt += `hysteria2://${UUID}@${ip}:${HY2_PORT}/?sni=www.bing.com&alpn=h3&insecure=1#${nodeName}\n`;
+  if (REALITY_PORT) listTxt += `vless://${UUID}@${ip}:${REALITY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&type=tcp&headerType=none#${nodeName}\n`;
+  if (ANYTLS_PORT) listTxt += `anytls://${UUID}@${ip}:${ANYTLS_PORT}?security=tls&sni=${ip}&fp=chrome&insecure=1&allowInsecure=1#${nodeName}\n`;
+  if (S5_PORT) { const s5Auth = Buffer.from(`${UUID.substring(0, 8)}:${UUID.substring(UUID.length - 12)}`).toString('base64').replace(/=/g, ''); listTxt += `socks://${s5Auth}@${ip}:${S5_PORT}#${nodeName}\n`; }
+  if (ANYREALITY_PORT) listTxt += `anytls://${UUID}@${ip}:${ANYREALITY_PORT}?security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&type=tcp&headerType=none#${nodeName}\n`;
 
   const subTxt = Buffer.from(listTxt.trim()).toString('base64');
   fs.writeFileSync(subtxt, subTxt);
@@ -536,11 +327,8 @@ async function uploadNodes() {
   try {
     const content = fs.readFileSync(path.join(FILE_PATH, 'list.txt'), 'utf-8');
     const nodes = content.split('\n').filter(line => /(vless|vmess|trojan|hysteria2|tuic):\/\//.test(line));
-    if (nodes.length > 0) {
-      await axios.post(`${UPLOAD_URL}/api/add-nodes`, JSON.stringify({ nodes }), { headers: { 'Content-Type': 'application/json' } });
-      console.log('Nodes uploaded');
-    }
-  } catch (error) { console.warn('Failed to upload nodes:', error.message); }
+    if (nodes.length > 0) { await axios.post(`${UPLOAD_URL}/api/add-nodes`, JSON.stringify({ nodes }), { headers: { 'Content-Type': 'application/json' } }); console.log('Nodes uploaded'); }
+  } catch (error) {}
 }
 
 async function sendToTelegram(subTxt, nodeName) {
@@ -554,11 +342,10 @@ async function sendToTelegram(subTxt, nodeName) {
       console.log('\nNodes sent to TG successfully');
     } else if (CHAT_ID) {
       await axios.post('http://api.tg.gvrander.eu.org/api/notify', { chat_id: CHAT_ID, message: botMessage }, { headers: { 'Authorization': 'Bearer eJWRgxC4LcznKLiUiDousw@nMgDBCSSUk6Iw0S9Pbs', 'Content-Type': 'application/json' } });
-    } else { console.log('\nTG variable is empty,skip sent'); return; }
-  } catch (error) { console.error('\nFailed to send nodes to TG', error.message); }
+    }
+  } catch (error) {}
 }
 
-// 🟢 初始化流程：确保先生成密钥和证书，再删旧节点，再下载运行
 async function init() {
   ensureDir(FILE_PATH);
   generateRealityKeys();
@@ -569,66 +356,17 @@ async function init() {
   await generateSub();
 }
 
-init().catch(error => { console.error('Error in init:', error); });
+init().catch(console.error);
 
-// HTTP 服务器 (含 HTML 伪装)
 const server = http.createServer((req, res) => {
   if (req.url === '/') {
-    const html = `
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ylm's Workspace</title>
-    <style>
-        :root { --bg-color: #0f172a; --text-color: #e2e8f0; --accent-color: #38bdf8; }
-        body { margin: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-color); display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
-        .container { text-align: center; padding: 2rem; animation: fadeIn 1s ease-in-out; }
-        h1 { font-size: 3rem; margin-bottom: 0.5rem; letter-spacing: -0.05em; background: linear-gradient(to right, #38bdf8, #818cf8); -webkit-background-clip: text; color: transparent; }
-        p { font-size: 1.2rem; color: #94a3b8; margin-bottom: 2rem; }
-        .btn-group { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
-        .btn { padding: 0.8rem 1.5rem; border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s; border: 1px solid rgba(255,255,255,0.1); }
-        .btn-primary { background-color: var(--accent-color); color: #0f172a; border: none; }
-        .btn-primary:hover { background-color: #0ea5e9; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3); }
-        .btn-secondary { background-color: rgba(255,255,255,0.05); color: var(--text-color); }
-        .btn-secondary:hover { background-color: rgba(255,255,255,0.1); }
-        .footer { position: absolute; bottom: 20px; font-size: 0.8rem; color: #475569; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Hello, I'm Ylm.</h1>
-        <p>Full Stack Developer & Cloud Enthusiast</p>
-        
-        <div class="btn-group">
-            <a href="https://blog.ylm.pp.ua" target="_blank" class="btn btn-primary">访问我的博客</a>
-            <a href="mailto:miny30930@gmail.com" class="btn btn-secondary">Email Me</a>
-            <a href="https://t.me/lschat_bot" target="_blank" class="btn btn-secondary">Telegram</a>
-        </div>
-    </div>
-    <div class="footer">Server is running normally | Node.js Environment</div>
-</body>
-</html>
-    `;
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(html);
+    res.end('<h1>Server is running</h1>');
   }
   if (req.url === '/sub') {
     fs.readFile(subtxt, 'utf8', (err, data) => {
-      if (err) {
-        console.error(err);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Error reading sub.txt' }));
-      } else {
-        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end(data);
-      }
+      if (err) { res.writeHead(500); res.end('Error'); } else { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(data); }
     });
   }
 });
-
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`Server on ${PORT}`));
